@@ -50,3 +50,63 @@ class PDFDocumentProcessor(DocumentProcessor):
                 )
         except Exception as e:
             raise RuntimeError(f"Failed to process PDF {file_path}: {str(e)}")
+        
+    def chunk_document(self, document: Document, chunk_size: int = None) -> List[Chunk]:
+        """
+        Split document into overlapping chunks using sliding window
+        """
+        if chunk_size:
+            self.chunk_size = chunk_size
+        
+        # initialize chunk output list and get content from document
+        chunks = []
+        text = document.content
+        
+        # simple chunking based on looking at end of sentences
+        start = 0
+        chunk_index = 0
+        
+        while start < len(text):
+            # makes sure the end is not larger than doc length
+            end = min(start + self.chunk_size, len(text))
+            
+            # break at sentence boundary
+            if end < len(text):
+                # make sure the sentence end is near the end of chunk
+                last_period = text.rfind('.', start, end)
+                if last_period != -1 and last_period > start + self.chunk_size // 2:
+                    end = last_period + 1
+            
+            # saves chunk and gets rid of extra formatting
+            chunk_text = text[start:end].strip()
+            
+            # skip empty chunks
+            if chunk_text:  
+                # keep metadata for later
+                chunk_metadata = {
+                    'doc_id': document.doc_id,
+                    'chunk_index': chunk_index,
+                    'start_char': start,
+                    'end_char': end,
+                    'source': document.metadata['source']
+                }
+                
+                # get id to track chunk
+                chunk_id = f"{document.doc_id}_{chunk_index}"
+                
+                # add new chunk object to the list
+                chunks.append(
+                    Chunk(
+                        content=chunk_text,
+                        metadata=chunk_metadata,
+                        chunk_id=chunk_id
+                    )
+                )
+                chunk_index += 1
+            
+            # move forward with overlap
+            start = end - self.chunk_overlap if end < len(text) else end
+        
+        # update document with its chunks
+        document.chunks = chunks
+        return chunks
