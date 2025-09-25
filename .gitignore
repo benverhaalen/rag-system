@@ -216,3 +216,5 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+# Project data outputs
+data/index/*/data/

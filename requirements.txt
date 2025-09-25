@@ -1,6 +1,5 @@
-pydantic>=2.7,<3
-pydantic-settings>=2.2,<3
-python-dotenv>=1.0,<2
-openai>=1.40.0
-numpy
+Streamlit
+OpenAI
+LangChain
+FAISS
 tiktoken

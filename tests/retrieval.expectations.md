@@ -1,0 +1,5 @@
+- Assert that ingestion splits Markdown docs into overlapping chunks without breaking headings.
+- Assert that the FAISS index stores embeddings for every chunk produced during ingestion.
+- Assert that retrieval surfaces the top `TOP_K` passages ranked by cosine similarity.
+- Assert that generation returns a concise answer with inline citation markers matching retrieved chunks.
+- Assert that the Streamlit UI displays expandable snippets linked to each citation.
