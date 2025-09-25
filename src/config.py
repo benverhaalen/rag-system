@@ -1,26 +1,15 @@
-import os
-from pathlib import Path
-from dotenv import load_dotenv
+# src/config.py
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# loads env variables
-load_dotenv()
+class Settings(BaseSettings):
+    openai_api_key: str = Field(..., alias="OPENAI_API_KEY")
+    embed_model: str = Field("text-embedding-3-small", alias="EMBED_MODEL")
+    chat_model: str = Field("gpt-5-mini", alias="CHAT_MODEL")
+    chunk_tokens: int = Field(800, alias="CHUNK_TOKENS")
+    chunk_overlap: int = Field(120, alias="CHUNK_OVERLAP")
 
-# project root
-BASE_DIR = Path(__file__).parent.parent
+    # tells pydantic settings to read from .env automatically
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
-# API config
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    raise ValueError("OPENAI_API_KEY not found in environment variables")
-
-# data paths
-DATA_DIR = BASE_DIR / "data"
-RAW_DATA_DIR = DATA_DIR / "raw"
-PROCESSED_DATA_DIR = DATA_DIR / "processed"
-
-# vector store config
-CHROMA_PERSIST_DIR = Path(os.getenv("CHROMA_PERSIST_DIRECTORY", "./data/chroma"))
-
-# creating directories if they dont exist
-for dir_path in [RAW_DATA_DIR, PROCESSED_DATA_DIR, CHROMA_PERSIST_DIR]:
-    dir_path.mkdir(parents=True, exist_ok=True)
+settings = Settings()
