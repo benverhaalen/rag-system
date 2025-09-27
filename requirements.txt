@@ -1,5 +1,3 @@
-Streamlit
-OpenAI
-LangChain
-FAISS
-tiktoken
+streamlit
+openai
+chromadb
