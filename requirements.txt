@@ -1,5 +1,6 @@
 streamlit
 openai
 chromadb
-langchain-text-splitters
+langchain
 tiktoken
+youtube-transcript-api
