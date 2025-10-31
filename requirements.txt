@@ -4,3 +4,4 @@ chromadb
 langchain
 tiktoken
 youtube-transcript-api
+python-dotenv
