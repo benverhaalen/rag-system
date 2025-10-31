@@ -1,181 +1,158 @@
-"""Generation pipeline for YouTube transcript RAG system using GPT-5-mini."""
-
+from openai import OpenAI
+from typing import Dict, List
 import os
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
-import openai
+from dotenv import load_dotenv
+from src.retrieval import search_video
 
-# Handle both relative and absolute imports
-try:
-    from .retrieval import YouTubeRetriever, RetrievalResult, create_prompt_template
-    from .config import config
-except ImportError:
-    from retrieval import YouTubeRetriever, RetrievalResult, create_prompt_template
-    from config import config
+load_dotenv()
 
 
-@dataclass
-class GenerationResponse:
-    """Container for generated response with metadata."""
-    answer: str
-    sources: List[RetrievalResult]
-    query: str
-    model_used: str
-    tokens_used: Optional[int] = None
+def init_openai_client() -> OpenAI:
+    api_key = os.getenv('OPENAI_API_KEY')
+
+    # create and return the openai client
+    return OpenAI(api_key=api_key)
 
 
-class YouTubeRAGGenerator:
-    """Generation system using GPT-5-mini for YouTube transcript QA."""
-    
-    def __init__(self, retriever: Optional[YouTubeRetriever] = None):
-        self.retriever = retriever or YouTubeRetriever()
-        self.model = config.generation_model
-        self.client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    
-    def generate_answer(self, query: str, n_retrieval_results: Optional[int] = None) -> GenerationResponse:
-        """
-        Generate an answer to a query using RAG pipeline.
-        
-        Args:
-            query: User's question
-            n_retrieval_results: Number of chunks to retrieve for context
-            
-        Returns:
-            GenerationResponse with answer and source information
-        """
-        # Step 1: Retrieve relevant context
-        retrieval_results = self.retriever.retrieve(query, n_retrieval_results)
-        
-        if not retrieval_results:
-            return GenerationResponse(
-                answer="I couldn't find any relevant information in the video transcripts to answer your question.",
-                sources=[],
-                query=query,
-                model_used=self.model
-            )
-        
-        # Step 2: Format context for LLM
-        context = self.retriever.format_context_for_llm(retrieval_results)
-        
-        # Step 3: Create prompt template
-        prompt = create_prompt_template(query, context)
-        
-        # Step 4: Generate response using GPT-5-mini
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=1000
-            )
-            
-            answer = response.choices[0].message.content
-            tokens_used = response.usage.total_tokens if response.usage else None
-            
-            return GenerationResponse(
-                answer=answer,
-                sources=retrieval_results,
-                query=query,
-                model_used=self.model,
-                tokens_used=tokens_used
-            )
-            
-        except Exception as e:
-            return GenerationResponse(
-                answer=f"Sorry, I encountered an error generating the response: {str(e)}",
-                sources=retrieval_results,
-                query=query,
-                model_used=self.model
-            )
-    
-    def format_response_for_ui(self, response: GenerationResponse) -> Dict[str, Any]:
-        """
-        Format generation response for Streamlit UI display.
-        
-        Args:
-            response: GenerationResponse object
-            
-        Returns:
-            Dictionary formatted for UI consumption
-        """
-        # Format sources with jump links
-        sources_formatted = []
-        for i, source in enumerate(response.sources, 1):
-            source_dict = {
-                "number": i,
-                "title": source.title,
-                "time_range": source.display_range,
-                "content_preview": source.content[:150] + "..." if len(source.content) > 150 else source.content,
-                "jump_url": source.jump_url,
-                "similarity": source.similarity_score
-            }
-            sources_formatted.append(source_dict)
-        
+def build_rag_prompt(query: str, context_chunks: List[Dict]) -> str:
+    # system instruction
+    prompt = "[ROLE]: You are an expert assistant that answers questions based on the exact information found in YouTube video transcripts.\n\n"
+
+    # add context section header
+    prompt += "[CONTEXT]: Here are relevant excerpts from the video transcript:\n\n"
+
+    # iterate through each context chunk, add chunk num and text content
+    for i, chunk in enumerate(context_chunks, 1):
+        prompt += f"[Excerpt {i}] (at {chunk['timestamp']:.1f} seconds):\n"
+        prompt += f"{chunk['text']}\n\n"
+
+    # add the user's question
+    prompt += f"Based on the above excerpts, please answer this question:\n{query}\n\n"
+
+    # add instructions for the response format
+    prompt += "[OUTPUT]: Provide a clear answer <250 words based on the transcript excerpts."
+    prompt += "If you reference specific information, mention which excerpt it came from. "
+    prompt += "If the excerpts don't contain enough information to answer the question, say so."
+
+    # return the complete prompt
+    return prompt
+
+
+def generate_answer(video_id: str, query: str, n_results: int = 5, model: str = "gpt-5-mini") -> Dict:
+    # retrieve relevant chunks
+    context_chunks = search_video(video_id=video_id, query=query, n_results=n_results)
+
+    # if there are no chunks found
+    if not context_chunks:
         return {
-            "answer": response.answer,
-            "query": response.query,
-            "sources": sources_formatted,
-            "model_info": {
-                "model": response.model_used,
-                "tokens_used": response.tokens_used
-            },
-            "source_count": len(response.sources)
+            'answer': "I couldn't find any relevant information in this video to answer your question.",
+            'sources': [],
+            'model': model,
+            'video_id': video_id
         }
 
+    # build prompt and call openai
+    prompt = build_rag_prompt(query, context_chunks)
+    client = init_openai_client()
 
-def create_rag_pipeline() -> YouTubeRAGGenerator:
-    """Create a complete RAG pipeline instance."""
-    return YouTubeRAGGenerator()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    answer = response.choices[0].message.content
+
+    # prepare source citations
+    sources = [
+        {
+            'text': chunk['text'],
+            'timestamp': chunk['timestamp'],
+            'video_id': chunk['video_id'],
+            'similarity_score': 1 - chunk['distance']
+        }
+        for chunk in context_chunks
+    ]
+
+    return {
+        'answer': answer,
+        'sources': sources,
+        'model': model,
+        'video_id': video_id,
+        'query': query
+    }
 
 
-# Example usage and testing
-if __name__ == "__main__":
-    print("🤖 Testing YouTube RAG Generation System")
-    print("=" * 50)
-    
-    # Validate configuration
-    if not config.validate():
-        print("❌ Please set up your .env file with OPENAI_API_KEY before testing.")
-        exit(1)
-    
-    # Initialize RAG pipeline
-    rag_generator = create_rag_pipeline()
-    
-    # Check if we have content in vector store
-    retrieval_stats = rag_generator.retriever.get_retrieval_stats()
-    print(f"Vector Store Stats: {retrieval_stats}")
-    
-    if retrieval_stats["total_chunks_available"] == 0:
-        print("⚠️  No chunks in vector store. Run vector_store.py first to add content.")
+def generate_summary(video_id: str, model: str = "gpt-5-mini") -> Dict:
+    # retrieve diverse chunks using a broad query
+    sample_chunks = search_video(
+        video_id=video_id,
+        query="main topics discussed in this video",
+        n_results=10
+    )
+
+    # if no chunks found
+    if not sample_chunks:
+        return {
+            'summary': "No content available to summarize for this video.",
+            'model': model,
+            'video_id': video_id
+        }
+
+    # build summarization prompt
+    prompt = "[ROLE]: You are a helpful assistant that summarizes YouTube video transcripts.\n\n"
+    prompt += "[CONTEXT]: Here are excerpts from throughout the video:\n\n"
+
+    for i, chunk in enumerate(sample_chunks, 1):
+        prompt += f"[{chunk['timestamp']:.1f}s]: {chunk['text']}\n\n"
+
+    prompt += "Based on these excerpts, provide a concise (<300 word) summary of the main topics and key points discussed in this video. "
+    prompt += "Structure your summary with bullet points for clarity."
+
+    # call openai to generate summary
+    client = init_openai_client()
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.5,
+        max_tokens=800
+    )
+
+    summary = response.choices[0].message.content
+
+    return {
+        'summary': summary,
+        'model': model,
+        'video_id': video_id,
+        'chunks_used': len(sample_chunks)
+    }
+
+
+def format_timestamp(seconds: float) -> str:
+    # convert seconds to integer to avoid decimals
+    seconds = int(seconds)
+
+    # calculate hours
+    hours = seconds // 3600
+
+    # calculate remaining minutes after removing hours
+    minutes = (seconds % 3600) // 60
+
+    # calculate remaining seconds after removing hours and minutes
+    secs = seconds % 60
+
+    # format based on whether video is over an hour
+    if hours > 0:
+        # use HH:MM:SS
+        return f"{hours}:{minutes:02d}:{secs:02d}"
     else:
-        # Test generation with sample queries
-        test_queries = [
-            "What are language models and how do they work?",
-            "How are neural networks trained?",
-            "What makes large language models different?"
-        ]
-        
-        for query in test_queries:
-            print(f"\n❓ Question: '{query}'")
-            print("-" * 50)
-            
-            # Generate answer
-            response = rag_generator.generate_answer(query)
-            
-            print(f"🤖 Answer:\n{response.answer}\n")
-            
-            if response.sources:
-                print(f"📚 Sources ({len(response.sources)} chunks):")
-                for i, source in enumerate(response.sources, 1):
-                    print(f"{i}. {source.display_range} | Similarity: {source.similarity_score:.3f}")
-                    print(f"   Jump to: {source.jump_url}")
-                    print(f"   Preview: {source.content[:100]}...\n")
-            
-            if response.tokens_used:
-                print(f"📊 Tokens used: {response.tokens_used}")
-            
-            print("-" * 50)
-    
-    print("\n✅ RAG generation pipeline testing completed!")
+        # use MM:SS
+        return f"{minutes}:{secs:02d}"
+
+
+def generate_youtube_link(video_id: str, timestamp: float) -> str:
+    # convert timestamp to integer seconds
+    timestamp_int = int(timestamp)
+
+    # construct youtube url with timestamp
+    return f"https://www.youtube.com/watch?v={video_id}&t={timestamp_int}s"
