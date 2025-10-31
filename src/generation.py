@@ -105,8 +105,7 @@ def generate_summary(video_id: str, model: str = "gpt-5-mini") -> Dict:
     for i, chunk in enumerate(sample_chunks, 1):
         prompt += f"[{chunk['timestamp']:.1f}s]: {chunk['text']}\n\n"
 
-    prompt += "Based on these excerpts, provide a concise (<300 word) summary of the main topics and key points discussed in this video. "
-    prompt += "Structure your summary with bullet points for clarity."
+    prompt += "Based on these excerpts, provide a concise 1 paragraph summary of the main topics and key points discussed in this video. Maximum 7 sentences. "
 
     # call openai to generate summary
     client = init_openai_client()
@@ -114,8 +113,7 @@ def generate_summary(video_id: str, model: str = "gpt-5-mini") -> Dict:
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.5,
-        max_tokens=800
+        max_completion_tokens=800  # gpt-5-mini uses max_completion_tokens instead of max_tokens
     )
 
     summary = response.choices[0].message.content
